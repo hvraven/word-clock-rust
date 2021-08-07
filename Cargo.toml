@@ -1,0 +1,41 @@
+[package]
+name = "word-clock"
+version = "0.1.0"
+authors = ["Hendrik v. Raven <hendrik@consetetur.de>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.dev]
+debug = true
+lto = true
+
+[profile.release]
+opt-level = 'z'
+lto = true
+debug = true
+
+[dependencies]
+array-init = "^1.0.0"
+bit_field = "^0.10.1"
+bitflags = "^1.2.1"
+cortex-m = "^0.6.3"
+cortex-m-rt = "^0.6.12"
+cortex-m-rtic = "^0.5.0"
+cortex-m-semihosting = "^0.3.7"
+embedded-hal = { version = "^0.2.4", features = ["unproven"] }
+heapless = "0.6"
+menu = { path = "./menu" }
+nb = "^1.0.0"
+panic-semihosting = "^0.5.6"
+rtcc = "0.2"
+
+[dependencies.chrono]
+default_features = false
+features = []
+version = "^0.4.15"
+
+[dependencies.stm32f0xx-hal]
+features = ["stm32f051", "rt"]
+path = "./stm32f0xx-hal"
+version = "^0.17.1"

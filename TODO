@@ -1,0 +1,16 @@
+# Board rev 1 errors
+* UHR draws to much current
+* VIER of VIERTEL does not respect PWM signal (full brightness)
+
+# To implement
+* DCF77
+** Time sync
+* Brightness measurement via ADC
+* Control & status via UART
+** DMA for UART messages
+* Variant select using switch
+
+# Next revision
+* Make USB usable for serial interface
+* Free up pin for RTC_REFIN
+* Extra status LEDs for debugging

@@ -28,6 +28,7 @@ heapless = "0.6"
 menu = { path = "./menu" }
 nb = "^1.0.0"
 panic-semihosting = "^0.5.6"
+replace_with = { version = "^0.1.7", default_features = false }
 rtcc = "0.2"
 
 [dependencies.chrono]

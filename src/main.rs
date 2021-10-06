@@ -1,22 +1,25 @@
 #![no_std]
 #![no_main]
 mod brightness;
+mod dcf77;
 mod display;
 
-use chrono::{NaiveTime, Timelike};
-use core::fmt::Write;
+use chrono::NaiveTime;
 use cortex_m;
 use heapless::{consts::*, spsc::Queue};
 use nb::block;
 use panic_semihosting as _;
 use rtcc::Rtcc;
 use rtic::app;
-use stm32f0xx_hal::adc::Adc;
 use stm32f0xx_hal::{
+    adc::Adc,
+    counter::CounterTimer,
+    delay::Delay,
     gpio::{
         gpiob::{PB6, PB7},
         Alternate, Output, Pin, PushPull, AF0,
     },
+    pac::{EXTI, TIM1},
     prelude::*,
     pwm,
     rcc::HSEBypassMode,
@@ -59,8 +62,9 @@ const APP: () = {
         words: display::WordDisplay<Pin<Output<PushPull>>>,
         minutes: display::MinuteDisplay<Pin<Output<PushPull>>>,
         brightness: brightness::BrightnessControl,
-        //dcf77: dcf77::DCF77<Timer<TIM1>>,
+        dcf77: dcf77::DCF77<CounterTimer<TIM1>>,
         rtc: Rtc,
+        delay: Delay,
         serial: Serial<USART1, PB6<Alternate<AF0>>, PB7<Alternate<AF0>>>,
         serial_queue: SerialBuffer,
     }
@@ -68,6 +72,7 @@ const APP: () = {
     #[init()]
     fn init(cx: init::Context) -> init::LateResources {
         cortex_m::interrupt::free(move |cs| {
+            let cp: cortex_m::Peripherals = cx.core;
             let dp: stm32f0xx_hal::pac::Peripherals = cx.device;
 
             let mut flash = dp.FLASH;
@@ -91,31 +96,39 @@ const APP: () = {
             rtc.set_alarm(Alarm::alarm().subseconds(8, 0)).unwrap();
 
             //let time = rtc.get_time().unwrap();
-            //hprintln!("{}:{}:{}", time.hour(), time.minute(), time.second()).unwrap();
+            //hprintln!("{}:{}:{}", time.hour(), time.minute(), time.second()).unwrap_or(());
 
-            // TODO fully implement DCF77
-            let _dcf77 = gpiob.pb3.into_pull_up_input(cs);
-            /*
-            let dcf77 = dcf77::DCF77::init(Timer::tim1(
-                dp.TIM1,
-                KiloHertz((1000. / 0.15) as u32),
-                &mut rcc,
-            ));
-             */
+            let dcf77_pin = gpiob.pb3.into_pull_up_input(cs);
+            // implement gpio interrupt; enable exti for PB3
+            let syscfg = dp.SYSCFG;
+            syscfg.exticr1.modify(|_, w| unsafe { w.exti3().bits(1) });
+            // Set interrupt request mask for line 3
+            exti.imr.modify(|_, w| w.mr3().set_bit());
+            // Set interrupt rising and falling trigger for line 3
+            exti.rtsr.modify(|_, w| w.tr3().set_bit());
+            exti.ftsr.modify(|_, w| w.tr3().set_bit());
+
+            let dcf77 = dcf77::DCF77::init(
+                CounterTimer::tim1(dp.TIM1, 1.khz(), &mut rcc),
+                dcf77_pin.downgrade(),
+                true,
+            );
 
             let words_pwm = pwm::tim2(
                 dp.TIM2,
                 gpioa.pa5.into_alternate_af2(cs),
-                20.khz(),
                 &mut rcc,
+                20.khz(),
             );
 
             let minutes_pwm = pwm::tim3(
                 dp.TIM3,
                 gpioc.pc9.into_alternate_af0(cs),
-                150.khz(),
                 &mut rcc,
+                150.khz(),
             );
+
+            let delay = Delay::new(cp.SYST, &rcc);
 
             let pd1_in = gpioa.pa0.into_analog(cs);
             let _pd2_in = gpioc.pc0.into_analog(cs);
@@ -197,7 +210,9 @@ const APP: () = {
                 words: word_display,
                 minutes: minute_display,
                 brightness: bright_ctl,
+                dcf77,
                 rtc,
+                delay,
                 serial,
                 serial_queue,
             }
@@ -218,23 +233,39 @@ const APP: () = {
         }
     }
 
-    #[task(binds=RTC, resources = [brightness, rtc, words, serial])]
+    #[task(binds=RTC, resources = [brightness, rtc, words, minutes, serial, delay])]
     fn rtc(cx: rtc::Context) {
         // RTC interrupt triggered on the start of every minute
         let time = cx.resources.rtc.get_time().unwrap();
 
-        cx.resources.serial.lock(|&mut s| {
-            write!(s, "{}:{}:{}\n", time.hour(), time.minute(), time.second()).unwrap();
-        });
+        //cx.resources.serial.lock(|&mut s| {
+        //    write!(s, "{}:{}:{}\n", time.hour(), time.minute(), time.second()).unwrap();
+        //});
 
-        //hprintln!("{}:{}:{}", time.hour(), time.minute(), time.second()).unwrap();
+        //hprintln!("{}:{}:{}", time.hour(), time.minute(), time.second()).unwrap_or(());
 
-        cx.resources.words.set_time(time).unwrap();
+        if cx.resources.words.needs_update(time) {
+            cx.resources.brightness.dim_down(cx.resources.delay);
+            cx.resources.words.set_time(time).unwrap();
+            cx.resources.minutes.set_time(time).unwrap();
+            cx.resources.delay.delay_ms(250u16);
+            cx.resources.brightness.dim_up(cx.resources.delay);
+        } else {
+            cx.resources.minutes.set_time(time).unwrap();
+        }
 
         // update brightness based on PD light level
         cx.resources.brightness.update();
 
         cx.resources.rtc.clear_interrupt(Event::AlarmA)
+    }
+
+    #[task(binds=EXTI2_3, resources=[dcf77], priority=2)]
+    fn dcf77_pin(cx: dcf77_pin::Context) {
+        cx.resources.dcf77.update_state().unwrap();
+
+        // clear exti pending bit
+        unsafe { (*EXTI::ptr()).pr.write(|w| w.pr3().set_bit()) }
     }
 
     extern "C" {

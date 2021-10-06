@@ -134,6 +134,7 @@ pub struct WordDisplay<Pin: OutputPin> {
     words: Words<Pin>,
     hours: [Word<Pin>; 12],
     lines: Lines<Pin>,
+    current: NaiveTime,
 }
 
 pub struct MinuteDisplay<Pin: OutputPin> {
@@ -347,6 +348,8 @@ impl<Pin: OutputPin> WordDisplay<Pin> {
                 line5a,
                 line5b,
             },
+
+            current: NaiveTime::from_hms(0, 0, 0),
         };
 
         // set all pins to the off state
@@ -357,6 +360,11 @@ impl<Pin: OutputPin> WordDisplay<Pin> {
         display.enable.set_high()?;
 
         Ok(display)
+    }
+
+    pub fn needs_update(&self, time: NaiveTime) -> bool {
+        return self.current.hour() != time.hour()
+            || self.current.minute() % 5 != time.second() % 5;
     }
 
     pub fn set_time(&mut self, time: NaiveTime) -> Result<(), Pin::Error> {
@@ -371,6 +379,8 @@ impl<Pin: OutputPin> WordDisplay<Pin> {
         // assuming 8MHz clock, delay for 2us (must be 2-20us to clear fault)
         delay(200);
         self.enable.set_high()?;
+
+        self.current = time;
 
         Ok(())
     }
